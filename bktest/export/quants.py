@@ -19,14 +19,20 @@ class QuantStatsExporter(Exporter):
         csv_output_file='report.csv',
         benchmark_ticker="SPY",
         auto_delete=False,
-        auto_override=False
+        auto_override=False,
+        fixed_nav=False,
     ):
         self.html_output_file = html_output_file
         self.csv_output_file = csv_output_file
         self.benchmark_ticker = benchmark_ticker
         self.auto_delete = auto_delete
         self.auto_override = auto_override
+        self.fixed_nav = fixed_nav
 
+        # Each row: (date, pre_reset_equity, post_reset_equity).
+        # For non-rebalance days pre == post.  For fixed_nav rebalance days
+        # pre_reset is the true market equity before cash extraction, and
+        # post_reset is initial_cash (the denominator for the next day).
         self.rows = []
 
         warnings.filterwarnings(
@@ -34,6 +40,9 @@ class QuantStatsExporter(Exporter):
             category=UserWarning,
             module=seaborn.__name__
         )
+
+    def configure(self, fixed_nav: bool) -> None:
+        self.fixed_nav = fixed_nav
 
     @abc.abstractmethod
     def initialize(self) -> None:
@@ -54,23 +63,46 @@ class QuantStatsExporter(Exporter):
 
     @abc.abstractmethod
     def on_snapshot(self, snapshot: Snapshot) -> None:
-        if snapshot.ordered:
-            return
-        
         date = snapshot.date
         if snapshot.postponned is not None:
             date = snapshot.postponned
 
-        self.rows.append(
-            (date, snapshot.equity)
-        )
+        if snapshot.ordered:
+            if self.fixed_nav and self.rows and self.rows[-1][0] == date:
+                # Rebalance day: subtract fees paid this period from pre_reset so
+                # that the return = (market_gain - fees) / initial_cash.
+                # post_reset is initial_cash (the denominator for the next period).
+                date_, pre_reset, _ = self.rows[-1]
+                self.rows[-1] = (date_, pre_reset - snapshot.total_fees, snapshot.equity)
+            return
+
+        # Non-ordered snapshot: pre_reset == post_reset (no cash extraction yet).
+        self.rows.append((date, snapshot.equity, snapshot.equity))
 
     @abc.abstractmethod
     def finalize(self) -> None:
-        self.dataframe = pandas.DataFrame(
+        df = pandas.DataFrame(
             self.rows,
-            columns=["date", "equity"]
+            columns=["date", "pre_reset_equity", "post_reset_equity"]
         ).set_index("date")
+
+        # Expose a single 'equity' column (post-reset) for backward compatibility.
+        df["equity"] = df["post_reset_equity"]
+
+        # Return on any day = (pre_reset - prev_post_reset) / prev_post_reset.
+        # - Non-rebalance days: pre == post, so this is the standard formula.
+        # - Rebalance days: pre_reset captures the true market move (net of fees);
+        #   post_reset is always initial_cash (the cash-reset formula guarantees
+        #   equity == initial_cash after every rebalance), becoming tomorrow's
+        #   denominator and preventing compounding. On loss weeks capital is
+        #   injected to restore the NAV — the negative return is still recorded
+        #   correctly. Consecutive rebalance days are handled automatically
+        #   because shift(1) always reads post_reset of the previous row.
+        df["daily_profit_pct"] = (
+            df["pre_reset_equity"] / df["post_reset_equity"].shift(1) - 1
+        )
+
+        self.dataframe = df
 
         if not len(self.dataframe):
             print(
@@ -81,14 +113,6 @@ class QuantStatsExporter(Exporter):
             return
 
         history_df = self.dataframe.copy()
-
-        history_df['profit'] = history_df['equity'] - \
-            history_df['equity'].shift(1)
-        history_df['daily_profit_pct'] = history_df["profit"] / \
-            history_df["equity"].shift(1)
-
-        # history_df['profit'].fillna(0, inplace=True)
-        # history_df['daily_profit_pct'].fillna(0, inplace=True)
 
         history_df.reset_index(inplace=True)
 
