@@ -64,8 +64,6 @@ class QuantStatsExporter(Exporter):
     @abc.abstractmethod
     def on_snapshot(self, snapshot: Snapshot) -> None:
         date = snapshot.date
-        if snapshot.postponned is not None:
-            date = snapshot.postponned
 
         if snapshot.ordered:
             if self.fixed_nav and self.rows and self.rows[-1][0] == date:

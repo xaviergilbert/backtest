@@ -129,13 +129,11 @@ class _Pod:
         self,
         date: datetime.date,
         result: OrderResultCollection,
-        postponned=None
     ):
         self.exporters.fire_snapshot(
             date,
             self.account,
             result,
-            postponned
         )
 
 
@@ -231,10 +229,7 @@ class ParallelBacktester:
                 price_date
             )
 
-            if price_date:
-                pod.fire_snapshot(price_date, result, postponned=date)
-            else:
-                pod.fire_snapshot(date, result)
+            pod.fire_snapshot(price_date or date, result)
 
         return result
 
@@ -242,21 +237,22 @@ class ParallelBacktester:
         self._fire_initialize()
 
         for date, ordered, skips in self.date_iterator:
+            self.update_price(date)
+
+            ordered_in_skip = False
             for skip in skips:
                 for pod in self.pods:
                     pod.exporters.fire_skip(skip.date, skip.reason, skip.ordered)
 
                 if skip.ordered:
-                    # Pre-order snapshot: fires before update_price(date) so holdings
-                    # still carry the previous trading day's prices.  For a skip day
-                    # (non-trading day) that is intentional — the last available price
-                    # is the correct representation of value on skip.date.  Execution
-                    # itself uses date's prices via price_date=date.
+                    ordered_in_skip = True
                     for pod in self.pods:
-                        pod.fire_snapshot(date, None, postponned=skip.date)
+                        pod.fire_snapshot(date, None)
                     self.order(skip.date, price_date=date)
 
-            self.update_price(date)
+            if not ordered_in_skip:
+                for pod in self.pods:
+                    pod.fire_snapshot(date, None)
 
             if ordered:
                 self.order(date)
@@ -348,21 +344,20 @@ class SimpleBacktester:
         self.exporters.fire_initialize()
 
         for date, ordered, skips in self.date_iterator:
+            self.update_price(date)
+
+            ordered_in_skip = False
             for skip in skips:
                 self.exporters.fire_skip(skip.date, skip.reason, skip.ordered)
 
                 if skip.ordered:
-                    # Pre-order snapshot: fires before update_price(date) so holdings
-                    # still carry the previous trading day's prices.  For a skip day
-                    # (non-trading day) that is intentional — the last available price
-                    # is the correct representation of value on skip.date.  Execution
-                    # itself uses date's prices via price_date=date.
-                    self.exporters.fire_snapshot(date, self.account, None, postponned=skip.date)
+                    ordered_in_skip = True
+                    self.exporters.fire_snapshot(date, self.account, None)
                     result = self.order(skip.date, price_date=date)
-                    self.exporters.fire_snapshot(date, self.account, result, postponned=skip.date)
+                    self.exporters.fire_snapshot(date, self.account, result)
 
-            self.update_price(date)
-            self.exporters.fire_snapshot(date, self.account, None)
+            if not ordered_in_skip:
+                self.exporters.fire_snapshot(date, self.account, None)
 
             if ordered:
                 result = self.order(date)

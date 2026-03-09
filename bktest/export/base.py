@@ -56,7 +56,6 @@ class ExporterCollection:
         date: datetime.date,
         account: "Account",
         result: "OrderResultCollection",
-        postponned=None
     ):
         cash = float(account.cash)
         equity = float(account.equity)
@@ -65,7 +64,6 @@ class ExporterCollection:
 
         snapshot = Snapshot(
             date=date,
-            postponned=postponned,
             cash=cash,
             equity=equity,
             holdings=holdings,

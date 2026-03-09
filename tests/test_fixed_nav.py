@@ -63,7 +63,7 @@ def _feed_snapshots(exporter, *specs):
         date, equity, ordered = spec[0], spec[1], spec[2]
         total_fees = spec[3] if len(spec) > 3 else 0.0
         exporter.on_snapshot(Snapshot(
-            date=date, postponned=None, cash=0.0, equity=equity,
+            date=date, cash=0.0, equity=equity,
             holdings=[], ordered=ordered, total_fees=total_fees,
         ))
 
@@ -267,27 +267,27 @@ class QuantStatsExporterTest(unittest.TestCase):
 
     def test_skip_day_snapshot_updates_correct_row(self):
         """When a rebalance is deferred to the next trading day (skip), snapshots
-        are keyed by skip.date via the postponned field.  The non-ordered snapshot
-        creates the row; the ordered snapshot finds it by date and updates post_reset."""
-        skip_date = datetime.date(2024, 1, 1)
+        use the effective trading date.  The non-ordered snapshot creates the row;
+        the ordered snapshot finds it by date and updates post_reset."""
+        effective_date = datetime.date(2024, 1, 1)
         prev_date = datetime.date(2023, 12, 29)
         exporter = _make_exporter()
 
         exporter.on_snapshot(Snapshot(
-            date=prev_date, postponned=None, cash=0.0, equity=105_000.0,
+            date=prev_date, cash=0.0, equity=105_000.0,
             holdings=[], ordered=False,
         ))
         exporter.on_snapshot(Snapshot(
-            date=skip_date, postponned=skip_date, cash=0.0, equity=112_000.0,
+            date=effective_date, cash=0.0, equity=112_000.0,
             holdings=[], ordered=False,
         ))
-        self.assertEqual((skip_date, 112_000.0, 112_000.0), exporter.rows[-1])
+        self.assertEqual((effective_date, 112_000.0, 112_000.0), exporter.rows[-1])
 
         exporter.on_snapshot(Snapshot(
-            date=skip_date, postponned=skip_date, cash=0.0, equity=100_000.0,
+            date=effective_date, cash=0.0, equity=100_000.0,
             holdings=[], ordered=True,
         ))
-        self.assertEqual((skip_date, 112_000.0, 100_000.0), exporter.rows[-1])
+        self.assertEqual((effective_date, 112_000.0, 100_000.0), exporter.rows[-1])
 
 
 # ---------------------------------------------------------------------------

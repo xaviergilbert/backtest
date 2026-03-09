@@ -109,9 +109,6 @@ class TextConsoleDelegate(ConsoleDelegate):
         if snapshot.ordered:
             out = "ordered"
 
-            if snapshot.postponned is not None:
-                out += f" ({snapshot.postponned})"
-
             return out
 
         return "price updated"
@@ -160,7 +157,6 @@ class JsonConsoleDelegate(ConsoleDelegate):
             "ordered": snapshot.ordered,
             "cash": snapshot.cash,
             "equity": snapshot.equity,
-            "postponned": str(snapshot.postponned) if snapshot.postponned else None,
             "totalFees": snapshot.total_fees,
             "successCount": snapshot.success_count,
             "failedCount": snapshot.failed_count,
