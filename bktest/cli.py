@@ -41,6 +41,7 @@ dotenv.load_dotenv()
 @click.option('--weekends', is_flag=True, help="Include weekends?")
 @click.option('--holidays', is_flag=True, help="Include holidays?")
 @click.option('--symbol-mapping', type=str, required=False, help="Custom symbol mapping file enabling vendor-id translation.")
+@click.option('--fixed-nav', is_flag=True, help="Use initial cash for position sizing instead of current equity (disables compounding).")
 @click.option('--no-caching', is_flag=True, help="Disable price caching.")
 @click.option('--fee-model', "fee_model_value", type=str, help="Specify a fee model. Must be a constant or an expression.")
 #
@@ -117,6 +118,7 @@ def main(
     weekends,
     holidays,
     symbol_mapping,
+    fixed_nav,
     no_caching,
     fee_model_value,
     #
@@ -144,6 +146,9 @@ def main(
 
     if auto_close_others:
         print("[warning] `--auto-close-others` is deprecated and is forced to `true`", file=sys.stderr)
+
+    if fixed_nav and quantity_mode != "percent":
+        print("[warning] `--fixed-nav` has no effect when `--quantity-mode` is not `percent`", file=sys.stderr)
 
     now = datetime.date.today()
 
@@ -277,6 +282,7 @@ def main(
             csv_output_file=quantstats_output_file_csv,
             benchmark_ticker=quantstats_benchmark_ticker,
             auto_delete=quantstats_auto_delete,
+            fixed_nav=fixed_nav,
         ))
 
     if specific_return:
@@ -336,7 +342,8 @@ def main(
         caching=not no_caching,
         allow_weekends=weekends,
         allow_holidays=holidays,
-        holiday_provider=holiday_provider
+        holiday_provider=holiday_provider,
+        fixed_nav=fixed_nav,
     ).run()
 
 

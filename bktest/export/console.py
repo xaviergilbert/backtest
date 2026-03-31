@@ -12,6 +12,24 @@ class ConsoleDelegate(Exporter):
 
     def __init__(self, file):
         self.file = file
+        # Track equity across snapshots to compute period return at rebalance time.
+        # _last_non_ordered_equity: equity just before orders execute (pre-reset).
+        # _last_ordered_equity: equity just after the previous rebalance (post-reset).
+        self._last_non_ordered_equity: typing.Optional[float] = None
+        self._last_ordered_equity: typing.Optional[float] = None
+
+    def _period_return(self) -> typing.Optional[float]:
+        """Return (pre_reset / prev_post_reset - 1), or None on the first rebalance."""
+        if self._last_non_ordered_equity is None or self._last_ordered_equity is None:
+            return None
+        return self._last_non_ordered_equity / self._last_ordered_equity - 1
+
+    def _track(self, snapshot: Snapshot) -> None:
+        """Update tracking state. Must be called at the end of on_snapshot."""
+        if snapshot.ordered:
+            self._last_ordered_equity = snapshot.equity
+        else:
+            self._last_non_ordered_equity = snapshot.equity
 
     def _print(self, content):
         print(content, file=self.file)
@@ -63,6 +81,11 @@ class TextConsoleDelegate(ConsoleDelegate):
         line = f"{date} ({day})   {ordered_color}{ordered_string:20}{self.color_reset}    [equity={equity:12.4f}]"
 
         if snapshot.ordered:
+            period_return = self._period_return()
+            if period_return is not None:
+                ret_color = self.color_green if period_return >= 0 else self.color_red
+                line += f"    [return={ret_color}{period_return:+.2%}{self.color_reset}]"
+
             holding_count = snapshot.holding_count
             line += f"    [portfolio={holding_count:4}]"
 
@@ -79,14 +102,12 @@ class TextConsoleDelegate(ConsoleDelegate):
                 closed_total = snapshot.closed_total
                 line += f"    [closed={closed_count}/{closed_total}]"
 
+        self._track(snapshot)
         self._print(line)
 
     def _ordered_to_string(self, snapshot: Snapshot):
         if snapshot.ordered:
             out = "ordered"
-
-            if snapshot.postponned is not None:
-                out += f" ({snapshot.postponned})"
 
             return out
 
@@ -128,21 +149,25 @@ class JsonConsoleDelegate(ConsoleDelegate):
     def on_snapshot(self, snapshot: Snapshot) -> None:
         self._coma()
 
+        period_return = self._period_return() if snapshot.ordered else None
+
         self._print_json({
             "event": "SNAPSHOT",
             "date": str(snapshot.date),
             "ordered": snapshot.ordered,
             "cash": snapshot.cash,
             "equity": snapshot.equity,
-            "postponned": str(snapshot.postponned) if snapshot.postponned else None,
             "totalFees": snapshot.total_fees,
             "successCount": snapshot.success_count,
             "failedCount": snapshot.failed_count,
+            "periodReturn": period_return,
             "closed": {
                 "count": snapshot.closed_count,
                 "total": snapshot.closed_total
             }
         })
+
+        self._track(snapshot)
 
     @abc.abstractmethod
     def finalize(self) -> None:

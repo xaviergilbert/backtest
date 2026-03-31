@@ -48,6 +48,7 @@ bktest [OPTIONS]
 | `--order-files-extension` | `<extension>` | `csv`  | `[csv, parquet, json]` | Change the file extension to use when listing for order files. |
 | `--initial-cash` | `<amount>` | `100_000` | `number` | Change the initial cash to use for the backtesting. |
 | `--quantity-mode` | `<mode>` | `percent` | `[percent, share]` | If the mode is `share`, all quantities will be interpreted as integers. If the mode is `percent`, all values will be multiplied by the current cash value. |
+| `--fixed-nav` | | `false` | | When using `percent` mode, always size positions based on `--initial-cash` instead of current equity. This disables equity increase in dollars volume: after each rebalance the NAV is reset to exactly `initial_cash` by extracting profits or injecting capital as needed. Fees are captured in each period's return as `(market_gain − fees) / initial_cash`. |
 | `--weekends` | | `false` | | Enable ordering on weekends. |
 | `--holidays` | | `false` | | Enable ordering on holidays. |
 | `--symbol-mapping` | `<mapping>` | | `path` (.json) | Specify a custom symbol mapping file enabling vendor-id translation. |

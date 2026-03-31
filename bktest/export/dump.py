@@ -62,9 +62,6 @@ class DumpExporter(Exporter):
         date = snapshot.date
         self.all_dates.add(date)
 
-        if snapshot.postponned is not None:
-            date = snapshot.postponned
-
         common = [
             snapshot.equity,
             float(snapshot.ordered),

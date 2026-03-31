@@ -18,6 +18,9 @@ class Exporter:
     def finalize(self) -> None:
         pass
 
+    def configure(self, fixed_nav: bool) -> None:
+        pass
+
 
 class ExporterCollection:
 
@@ -44,12 +47,15 @@ class ExporterCollection:
         for exporter in self.elements:
             exporter.on_skip(date, reason, ordered)
 
+    def configure(self, fixed_nav: bool) -> None:
+        for exporter in self.elements:
+            exporter.configure(fixed_nav)
+
     def fire_snapshot(
         self,
         date: datetime.date,
         account: "Account",
         result: "OrderResultCollection",
-        postponned=None
     ):
         cash = float(account.cash)
         equity = float(account.equity)
@@ -58,7 +64,6 @@ class ExporterCollection:
 
         snapshot = Snapshot(
             date=date,
-            postponned=postponned,
             cash=cash,
             equity=equity,
             holdings=holdings,

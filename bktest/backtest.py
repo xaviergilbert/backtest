@@ -21,12 +21,14 @@ class _Pod:
         price_provider: PriceProvider,
         account: Account,
         exporters: ExporterCollection,
+        fixed_nav: bool = False,
     ):
         self.quantity_in_decimal = quantity_in_decimal
         self.auto_close_others = auto_close_others
         self.price_provider = price_provider
         self.account = account
         self.exporters = exporters
+        self.fixed_nav = fixed_nav
 
     def order(
         self,
@@ -49,7 +51,7 @@ class _Pod:
         others = self.account.symbols
 
         if self.quantity_in_decimal:
-            equity = self.account.equity
+            equity = self.account.initial_cash if self.fixed_nav else self.account.equity
 
             for order in orders:
                 symbol = order.symbol
@@ -82,25 +84,28 @@ class _Pod:
                     if result.success:
                         others.discard(symbol)
                     else:
-                        print(f"[warning] order not placed: {symbol} @ {percent}%", file=sys.stderr)
+                        print(f"[warning] order not placed: {symbol} @ {quantity} shares", file=sys.stderr)
                 else:
                     print(f"[warning] cannot place order: {symbol} @ {quantity}x: no price available", file=sys.stderr)
 
         if self.auto_close_others:
-            self._close_all(others, date, results)
+            self._close_all(others, price_date, results)
+
+        if self.fixed_nav and self.quantity_in_decimal:
+            self.account.cash = self.account.initial_cash - self.account.value
 
         return results
 
     def _close_all(
         self,
         symbols: typing.Iterable[str],
-        date: datetime.date,
+        price_date: datetime.date,
         results: OrderResultCollection
     ):
         closed, total = 0, 0
 
         for symbol in symbols:
-            price = self.price_provider.get(date, symbol)
+            price = self.price_provider.get(price_date, symbol)
             result = self.account.close_position(symbol, price)
 
             if result.missing:
@@ -124,13 +129,11 @@ class _Pod:
         self,
         date: datetime.date,
         result: OrderResultCollection,
-        postponned=None
     ):
         self.exporters.fire_snapshot(
             date,
             self.account,
             result,
-            postponned
         )
 
 
@@ -153,6 +156,7 @@ class ParallelBacktester:
         allow_weekends=False,
         allow_holidays=False,
         holiday_provider: HolidayProvider = LegacyHolidayProvider(),
+        fixed_nav: bool = False,
     ):
         self.order_provider = order_provider
         order_dates = order_provider.get_dates()
@@ -160,13 +164,19 @@ class ParallelBacktester:
 
         self.price_provider = PriceProvider(start, end, data_source, mapper, caching=caching)
 
+        def _make_exporter_collection(index):
+            ec = ExporterCollection(exporters_factory(index))
+            ec.configure(fixed_nav=fixed_nav)
+            return ec
+
         self.pods = [
             _Pod(
                 quantity_in_decimal,
                 auto_close_others,
                 self.price_provider,
                 Account(initial_cash=initial_cash, fee_model=fee_model),
-                ExporterCollection(exporters_factory(index))
+                _make_exporter_collection(index),
+                fixed_nav=fixed_nav,
             )
             for index in range(n)
         ]
@@ -197,7 +207,7 @@ class ParallelBacktester:
                     price = cache[symbol] = self.price_provider.get(date, holding.symbol)
 
                 if price is None:
-                    print(f"[warning] price not updated: {holding.symbol}: keeping last: {holding.price}", file=sys.stderr)
+                    print(f"[warning] {date}: price not updated: {holding.symbol}: keeping last: {holding.price}", file=sys.stderr)
                     holding.up_to_date = False
                 else:
                     holding.price = price
@@ -219,10 +229,7 @@ class ParallelBacktester:
                 price_date
             )
 
-            if price_date:
-                pod.fire_snapshot(price_date, result, postponned=date)
-            else:
-                pod.fire_snapshot(date, result)
+            pod.fire_snapshot(price_date or date, result)
 
         return result
 
@@ -230,14 +237,22 @@ class ParallelBacktester:
         self._fire_initialize()
 
         for date, ordered, skips in self.date_iterator:
+            self.update_price(date)
+
+            ordered_in_skip = False
             for skip in skips:
                 for pod in self.pods:
                     pod.exporters.fire_skip(skip.date, skip.reason, skip.ordered)
 
                 if skip.ordered:
+                    ordered_in_skip = True
+                    for pod in self.pods:
+                        pod.fire_snapshot(date, None)
                     self.order(skip.date, price_date=date)
 
-            self.update_price(date)
+            if not ordered_in_skip:
+                for pod in self.pods:
+                    pod.fire_snapshot(date, None)
 
             if ordered:
                 self.order(date)
@@ -272,6 +287,7 @@ class SimpleBacktester:
         allow_weekends=False,
         allow_holidays=False,
         holiday_provider: HolidayProvider = LegacyHolidayProvider(),
+        fixed_nav: bool = False,
     ):
         self.order_provider = order_provider
         order_dates = order_provider.get_dates()
@@ -279,12 +295,15 @@ class SimpleBacktester:
 
         self.price_provider = PriceProvider(start, end, data_source, mapper, caching=caching)
 
+        exporter_collection = ExporterCollection(exporters)
+        exporter_collection.configure(fixed_nav=fixed_nav)
         self.pod = _Pod(
             quantity_in_decimal,
             auto_close_others,
             self.price_provider,
             Account(initial_cash=initial_cash, fee_model=fee_model),
-            ExporterCollection(exporters)
+            exporter_collection,
+            fixed_nav=fixed_nav,
         )
 
         self.date_iterator = DateIterator(
@@ -302,7 +321,7 @@ class SimpleBacktester:
             price = self.price_provider.get(date, holding.symbol)
 
             if price is None:
-                print(f"[warning] price not updated: {holding.symbol}: keeping last: {holding.price}", file=sys.stderr)
+                print(f"[warning] {date}: price not updated: {holding.symbol}: keeping last: {holding.price}", file=sys.stderr)
                 holding.up_to_date = False
             else:
                 holding.price = price
@@ -325,15 +344,20 @@ class SimpleBacktester:
         self.exporters.fire_initialize()
 
         for date, ordered, skips in self.date_iterator:
+            self.update_price(date)
+
+            ordered_in_skip = False
             for skip in skips:
                 self.exporters.fire_skip(skip.date, skip.reason, skip.ordered)
 
                 if skip.ordered:
+                    ordered_in_skip = True
+                    self.exporters.fire_snapshot(date, self.account, None)
                     result = self.order(skip.date, price_date=date)
-                    self.exporters.fire_snapshot(date, self.account, result, postponned=skip.date)
+                    self.exporters.fire_snapshot(date, self.account, result)
 
-            self.update_price(date)
-            self.exporters.fire_snapshot(date, self.account, None)
+            if not ordered_in_skip:
+                self.exporters.fire_snapshot(date, self.account, None)
 
             if ordered:
                 result = self.order(date)
